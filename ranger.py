@@ -28,7 +28,7 @@ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT
 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 '''
-import base64, sys, argparse, re, subprocess, os, time
+import base64, sys, argparse, re, subprocess, os, time, logging
 
 try:
     import netifaces
@@ -374,6 +374,7 @@ Create Pasteable Double Encoded Script:
     # Set Constructors
     verbose = args.verbose             # Verbosity level
     src_port = args.src_port           # Port to source the Mimikatz script on
+    log = args.log
     if ".log" not in log:
         log = log + ".log"
     level = logging.DEBUG                                                                             # Logging level
