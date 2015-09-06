@@ -40,7 +40,7 @@ tar -xzvf impacket-0.9.13.tar.gz && mv impacket-0.9.13 impacket
 cd impacket && python setup.py install
 rm ~/impacket-0.9.13.tar.gz
 touch ~/impacket/examples/ranger.py && rm ~/impacket/examples/ranger.py
-cd examples && https://raw.githubusercontent.com/funkandwagnalls/ranger/master/ranger.py && chmod a+x ranger.py
+cd examples && wget https://raw.githubusercontent.com/funkandwagnalls/ranger/master/ranger.py && chmod a+x ranger.py
 
 mkdir -p /opt/ranger/smb
 mkdir -p /opt/ranger/web
