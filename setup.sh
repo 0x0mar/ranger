@@ -55,4 +55,4 @@ cd web
 wget https://raw.githubusercontent.com/PowerShellEmpire/PowerTools/master/PowerView/powerview.ps1 -O pv.ps1
 wget https://raw.githubusercontent.com/mattifestation/PowerSploit/master/Exfiltration/Invoke-Mimikatz.ps1 -O im.ps1
 chmod a+x pv.ps1 im.ps1
-cp -p {pv.ps1, im.ps1} /opt/ranger/smb
+cp -p pv.ps1 im.ps1 /opt/ranger/smb/
