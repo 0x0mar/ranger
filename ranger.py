@@ -378,13 +378,26 @@ Create Pasteable Double Encoded Script:
     parser.add_argument("-l", "--logfile", action="store", dest="log", default="results.log", type=str, help="The log file to output the results")
     parser.add_argument("-v", action="count", dest="verbose", default=1, help="Verbosity level, defaults to one, this outputs each command and result")
     parser.add_argument("-q", action="store_const", dest="verbose", const=0, help="Sets the results to be quiet")
-    parser.add_argument('--version', action='version', version='%(prog)s 0.42b')
+    parser.add_argument("--update", action="store_true", dest="update", default=False, help="Updates ranger and the supporting libraries")
+    parser.add_argument('--version', action='version', version='%(prog)s 0.43b')
+
     args = parser.parse_args()
 
     # Argument Validator
     if len(sys.argv)==1:
         parser.print_help()
         sys.exit(1)
+    
+    if args.update:
+        try:
+            os.system("wget https://raw.githubusercontent.com/funkandwagnalls/ranger/master/setup.sh -O /root/setup.sh && chmod a+x /root/setup.sh")
+        except Exception, e:
+            print("[!] An error occurred downloading the update files: %s") % (e)
+        try:
+            os.system("/root/setup.sh && rm /root/setup.sh")
+        except Exception, e:
+            print("[!] An error occurred when executing the installation script: %s") % (e)
+
 
     # Set Constructors
     verbose = args.verbose             # Verbosity level
