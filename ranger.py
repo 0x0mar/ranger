@@ -374,7 +374,7 @@ Create Pasteable Double Encoded Script:
     sam_dump_options.add_argument("--sam", action="store", help="The SAM hive to parse")
     sam_dump_options.add_argument("--ntds", action="store", help="The NTDS.DIT file to parse")
     obfiscation.add_argument("--encoder", action="store_true", help="Set to encode the commands that are being executed")
-    obfiscation.add_argument("--delivery", action="store", dest=delivery, choices={"web","smb"}, default="web", help="Set the type of catapult server the payload will be downloaded from, web or smb")
+    obfiscation.add_argument("--delivery", action="store", dest="delivery", choices={"web","smb"}, default="web", help="Set the type of catapult server the payload will be downloaded from, web or smb")
     parser.add_argument("-l", "--logfile", action="store", dest="log", default="results.log", type=str, help="The log file to output the results")
     parser.add_argument("-v", action="count", dest="verbose", default=1, help="Verbosity level, defaults to one, this outputs each command and result")
     parser.add_argument("-q", action="store_const", dest="verbose", const=0, help="Sets the results to be quiet")
@@ -387,7 +387,7 @@ Create Pasteable Double Encoded Script:
     if len(sys.argv)==1:
         parser.print_help()
         sys.exit(1)
-    
+
     if args.update:
         try:
             os.system("wget https://raw.githubusercontent.com/funkandwagnalls/ranger/master/setup.sh -O /root/setup.sh && chmod a+x /root/setup.sh")
