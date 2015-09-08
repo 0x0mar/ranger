@@ -11,88 +11,45 @@ try:
     from impacket.dcerpc.v5.dcom import wmi
     from impacket.dcerpc.v5.dcomrt import DCOMConnection
     from impacket.examples import logger
+    import cmd
 except Exception as e:
     print("[!] The following error occured %s") % (e)
     sys.exit("[!] Install the necessary impacket libraries and move this script to the examples directory within it")
 
-    class WMIQUERY(cmd.Cmd):
-        def __init__(self, iWbemServices):
-            cmd.Cmd.__init__(self)
-            self.iWbemServices = iWbemServices
-            self.prompt = 'WQL> '
-            self.intro = '[!] Press help for extra shell commands'
+class WMIQUERY(cmd.Cmd):
+    def __init__(self, iWbemServices):
+        cmd.Cmd.__init__(self)
+        self.iWbemServices = iWbemServices
+        self.record = ""
 
-        def do_help(self, line):
-            print """
-     lcd {path}                 - changes the current local directory to {path}
-     exit                       - terminates the server process (and this session)
-     describe {class}           - describes class
-     ! {cmd}                    - executes a local shell cmd
-     """
-
-        def do_shell(self, s):
-            os.system(s)
-
-        def do_describe(self, sClass):
-            sClass = sClass.strip('\n')
-            if sClass[-1:] == ';':
-                sClass = sClass[:-1]
+    def printReply(self, iEnum):
+        printHeader = True
+        while True:
             try:
-                iObject, _ = self.iWbemServices.GetObject(sClass)
-                iObject.printInformation()
-                iObject.RemRelease()
+                pEnum = iEnum.Next(0xffffffff,1)[0]
+                self.record = pEnum.getProperties()
+                printHeader = False
             except Exception, e:
-                #import traceback
-                #print traceback.print_exc()
-                logging.error(str(e))
+                if str(e).find('S_FALSE') < 0:
+                    raise
+                else:
+                    break
+        iEnum.RemRelease()
 
-        def do_lcd(self, s):
-            if s == '':
-                print os.getcwd()
-            else:
-                os.chdir(s)
+    def default(self, line):
+        line = line.strip('\n')
+        if line[-1:] == ';':
+            line = line[:-1]
+        try:
+            iEnumWbemClassObject = self.iWbemServices.ExecQuery(line.strip('\n'))
+            self.printReply(iEnumWbemClassObject)
+            iEnumWbemClassObject.RemRelease()
+        except Exception, e:
+            logging.error(str(e))
 
-        def printReply(self, iEnum):
-            printHeader = True
-            while True:
-                try:
-                    pEnum = iEnum.Next(0xffffffff,1)[0]
-                    record = pEnum.getProperties()
-                    if printHeader is True:
-                        print '|',
-                        for col in record:
-                            print '%s |' % col,
-                        print
-                        printHeader = False
-                    print '|',
-                    for key in record:
-                        print '%s |' % record[key]['value'],
-                    print
-                except Exception, e:
-                    #import traceback
-                    #print traceback.print_exc()
-                    if str(e).find('S_FALSE') < 0:
-                        raise
-                    else:
-                        break
-            iEnum.RemRelease()
+    def return_data(self):
+        return(self.record)
 
-        def default(self, line):
-            line = line.strip('\n')
-            if line[-1:] == ';':
-                line = line[:-1]
-            try:
-                iEnumWbemClassObject = self.iWbemServices.ExecQuery(line.strip('\n'))
-                self.printReply(iEnumWbemClassObject)
-                iEnumWbemClassObject.RemRelease()
-            except Exception, e:
-                logging.error(str(e))
-
-        def emptyline(self):
-            pass
-
-        def do_exit(self, line):
-            return True
 
 '''
 Author: Christopher Duffy
@@ -432,12 +389,13 @@ def wmi_test(usr, pwd, dom, dst, hash, aes, kerberos):
         LM = ''
         NTLM  = ''
     namespace = '//./root/cimv2'
+    wmi_init = None
     try:
         with Timeout(3):
            connection = DCOMConnection(dst, usr, pwd, dom, LM, NTLM, aes, oxidResolver = True, doKerberos = kerberos)
 
-           wmi_int = connection.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
-           wmi_login = wmi.IWbemLevel1Login(wim_init)
+           wmi_init = connection.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
+           wmi_login = wmi.IWbemLevel1Login(wmi_init)
            wmi_services = wmi_login.NTLMLogin(namespace, NULL, NULL)
            wmi_login.RemRelease()
 
@@ -445,34 +403,23 @@ def wmi_test(usr, pwd, dom, dst, hash, aes, kerberos):
            wmi_shell.onecmd("SELECT * FROM Win32_Processor")
 
            wmi_services.RemRelease()
+        if wmi_init:
            wmi_init.disconnect()
     except Exception, e:
         #logging.error(str(e))
         if e == None:
             e = "Time exceeded"
         print("[!] An error occurred while querying the WMI service: %s") % (e)
-        try:
-            wmi_init.disconnect()
-        except:
-            pass
-
-'''
-def wmi_test(usr, pwd, dom, dst):
-    output = None
-    dom_usr = dom + "/" + usr
-    if dom == "WORKGROUP":
-        wmic = wmi.WmiClientWrapper(username=usr,password=pwd,host=dst)
+        if wmi_init:
+            try:
+                wmi_init.disconnect()
+            except:
+                pass
+    if wmi_shell.return_data:
+        output = True
     else:
-        wmic = wmi.WmiClientWrapper(username=dom_usr,password=pwd,host=dst)
-    try:
-        output = wmic.query("SELECT * FROM Win32_Processor")
-    except:
-        ouptut = False
-    if output:
-        return(True)
-    else:
-        return(False)
-'''
+        output = False
+    return(output)
 
 def main():
     # If script is executed at the CLI
